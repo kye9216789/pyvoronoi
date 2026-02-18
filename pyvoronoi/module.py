@@ -41,10 +41,22 @@ def generate_internal_segments(exterior, scaling_factor: int = 1):
     return _generate_internal_segments_native(exterior_array, scaling_factor)
 
 
-def generate_internal_graph(exterior, scaling_factor: int = 1):
+def generate_internal_graph(
+    exterior,
+    scaling_factor: int = 1,
+    resample_spacing: float = 0.0,
+    smooth_iterations: int = 2,
+    enforce_within_polygon: bool = True,
+):
     """Build an sknw-style networkx Graph from a polygon exterior."""
     exterior_array = np.asarray(exterior, dtype=np.float64)
-    graph_data = _generate_internal_graph_native(exterior_array, scaling_factor)
+    graph_data = _generate_internal_graph_native(
+        exterior_array,
+        scaling_factor,
+        resample_spacing,
+        smooth_iterations,
+        enforce_within_polygon,
+    )
     try:
         import networkx as nx
     except ImportError as exc:
@@ -52,8 +64,8 @@ def generate_internal_graph(exterior, scaling_factor: int = 1):
 
     graph = nx.Graph()
     nodes = np.asarray(graph_data["nodes"], dtype=np.float64)
-    for node_id, node_yx in enumerate(nodes):
-        graph.add_node(int(node_id), o=node_yx)
+    for node_id, node_xy in enumerate(nodes):
+        graph.add_node(int(node_id), o=node_xy)
 
     edges_u = np.asarray(graph_data["edges_u"], dtype=np.int64)
     edges_v = np.asarray(graph_data["edges_v"], dtype=np.int64)
@@ -64,11 +76,11 @@ def generate_internal_graph(exterior, scaling_factor: int = 1):
     for edge_id in range(len(edge_weights)):
         start = int(offsets[edge_id])
         end = int(offsets[edge_id + 1])
-        points_yx = edge_points[start:end]
+        points_xy = edge_points[start:end]
         graph.add_edge(
             int(edges_u[edge_id]),
             int(edges_v[edge_id]),
-            pts=points_yx,
+            pts=points_xy,
             weight=float(edge_weights[edge_id]),
         )
 
@@ -201,8 +213,20 @@ class PyVoronoi:
     def generate_internal_segments(self, exterior):
         return generate_internal_segments(exterior, self.scaling_factor)
 
-    def generate_internal_graph(self, exterior):
-        return generate_internal_graph(exterior, self.scaling_factor)
+    def generate_internal_graph(
+        self,
+        exterior,
+        resample_spacing: float = 0.0,
+        smooth_iterations: int = 2,
+        enforce_within_polygon: bool = True,
+    ):
+        return generate_internal_graph(
+            exterior,
+            self.scaling_factor,
+            resample_spacing,
+            smooth_iterations,
+            enforce_within_polygon,
+        )
 
     @staticmethod
     def compute_internal_ridges(exterior, scaling_factor: int = 1):

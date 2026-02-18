@@ -2,7 +2,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -11,270 +10,24 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "internal_graph_pipeline.hpp"
 #include "voronoi.hpp"
 
 namespace py = pybind11;
 
 namespace {
 
-struct GraphPoint {
-    double x;
-    double y;
 
-    bool operator==(const GraphPoint& other) const {
-        return x == other.x && y == other.y;
-    }
-};
 
-struct GraphEdgeRef {
-    int u;
-    int v;
-};
-
-struct GraphPath {
-    int node_u;
-    int node_v;
-    std::vector<int> vertices;
-    double weight;
-};
-
-struct PackedGraphData {
-    std::vector<std::array<double, 2>> nodes_yx;
-    std::vector<long long> edges_u;
-    std::vector<long long> edges_v;
-    std::vector<long long> edge_offsets;
-    std::vector<std::array<double, 2>> edge_points_yx;
-    std::vector<double> edge_weights;
-};
-
-double polyline_length(const std::vector<int>& path_vertices, const std::vector<GraphPoint>& points_xy) {
-    double total = 0.0;
-    if (path_vertices.size() < 2) {
-        return total;
-    }
-    for (std::size_t i = 1; i < path_vertices.size(); ++i) {
-        const auto& p0 = points_xy[static_cast<std::size_t>(path_vertices[i - 1])];
-        const auto& p1 = points_xy[static_cast<std::size_t>(path_vertices[i])];
-        const double dx = p1.x - p0.x;
-        const double dy = p1.y - p0.y;
-        total += std::sqrt(dx * dx + dy * dy);
-    }
-    return total;
-}
-
-PackedGraphData build_internal_graph_data(const std::vector<std::array<double, 4>>& ridges) {
-    PackedGraphData packed;
-
-    if (ridges.empty()) {
-        packed.edge_offsets.push_back(0);
-        return packed;
-    }
-
-    std::map<std::pair<double, double>, int> point_to_vertex;
-    std::vector<GraphPoint> vertices_xy;
-    vertices_xy.reserve(ridges.size() * 2);
-
-    auto get_vertex_id = [&](double x, double y) -> int {
-        const auto key = std::make_pair(x, y);
-        const auto it = point_to_vertex.find(key);
-        if (it != point_to_vertex.end()) {
-            return it->second;
-        }
-        const int id = static_cast<int>(vertices_xy.size());
-        vertices_xy.push_back(GraphPoint{x, y});
-        point_to_vertex.emplace(key, id);
-        return id;
-    };
-
-    std::map<std::pair<int, int>, int> undirected_edge_seen;
-    std::vector<GraphEdgeRef> edges;
-    edges.reserve(ridges.size());
-
-    for (const auto& ridge : ridges) {
-        const int u = get_vertex_id(ridge[0], ridge[1]);
-        const int v = get_vertex_id(ridge[2], ridge[3]);
-        if (u == v) {
-            continue;
-        }
-
-        const int a = (u < v) ? u : v;
-        const int b = (u < v) ? v : u;
-        const auto key = std::make_pair(a, b);
-        if (undirected_edge_seen.find(key) != undirected_edge_seen.end()) {
-            continue;
-        }
-        undirected_edge_seen.emplace(key, static_cast<int>(edges.size()));
-        edges.push_back(GraphEdgeRef{u, v});
-    }
-
-    if (edges.empty()) {
-        packed.edge_offsets.push_back(0);
-        return packed;
-    }
-
-    std::vector<std::vector<int>> adjacency(vertices_xy.size());
-    for (int edge_id = 0; edge_id < static_cast<int>(edges.size()); ++edge_id) {
-        const auto& e = edges[static_cast<std::size_t>(edge_id)];
-        adjacency[static_cast<std::size_t>(e.u)].push_back(edge_id);
-        adjacency[static_cast<std::size_t>(e.v)].push_back(edge_id);
-    }
-
-    std::vector<char> is_node(vertices_xy.size(), 0);
-    std::vector<int> vertex_to_node(vertices_xy.size(), -1);
-
-    for (std::size_t v = 0; v < adjacency.size(); ++v) {
-        if (adjacency[v].size() != 2U) {
-            is_node[v] = 1;
-            vertex_to_node[v] = static_cast<int>(packed.nodes_yx.size());
-            const auto& p = vertices_xy[v];
-            packed.nodes_yx.push_back(std::array<double, 2>{p.y, p.x});
-        }
-    }
-
-    std::vector<char> edge_visited(edges.size(), 0);
-    std::vector<GraphPath> graph_paths;
-    graph_paths.reserve(edges.size());
-
-    auto other_vertex = [&](int edge_id, int current_vertex) -> int {
-        const auto& e = edges[static_cast<std::size_t>(edge_id)];
-        return (e.u == current_vertex) ? e.v : e.u;
-    };
-
-    auto extend_from_node = [&](int start_vertex, int first_edge_id) {
-        if (edge_visited[static_cast<std::size_t>(first_edge_id)] != 0) {
-            return;
-        }
-
-        std::vector<int> path_vertices;
-        path_vertices.reserve(16);
-        path_vertices.push_back(start_vertex);
-
-        int current_vertex = start_vertex;
-        int current_edge = first_edge_id;
-
-        for (;;) {
-            edge_visited[static_cast<std::size_t>(current_edge)] = 1;
-            const int next_vertex = other_vertex(current_edge, current_vertex);
-            path_vertices.push_back(next_vertex);
-
-            if (is_node[static_cast<std::size_t>(next_vertex)] != 0) {
-                const int node_u = vertex_to_node[static_cast<std::size_t>(start_vertex)];
-                const int node_v = vertex_to_node[static_cast<std::size_t>(next_vertex)];
-                graph_paths.push_back(GraphPath{node_u, node_v, path_vertices, polyline_length(path_vertices, vertices_xy)});
-                return;
-            }
-
-            int next_edge = -1;
-            const auto& incident = adjacency[static_cast<std::size_t>(next_vertex)];
-            for (int candidate : incident) {
-                if (candidate != current_edge && edge_visited[static_cast<std::size_t>(candidate)] == 0) {
-                    next_edge = candidate;
-                    break;
-                }
-            }
-
-            if (next_edge < 0) {
-                const int synthetic_node = static_cast<int>(packed.nodes_yx.size());
-                vertex_to_node[static_cast<std::size_t>(next_vertex)] = synthetic_node;
-                is_node[static_cast<std::size_t>(next_vertex)] = 1;
-                const auto& p = vertices_xy[static_cast<std::size_t>(next_vertex)];
-                packed.nodes_yx.push_back(std::array<double, 2>{p.y, p.x});
-                const int node_u = vertex_to_node[static_cast<std::size_t>(start_vertex)];
-                graph_paths.push_back(GraphPath{node_u, synthetic_node, path_vertices, polyline_length(path_vertices, vertices_xy)});
-                return;
-            }
-
-            current_vertex = next_vertex;
-            current_edge = next_edge;
-        }
-    };
-
-    for (std::size_t v = 0; v < adjacency.size(); ++v) {
-        if (is_node[v] == 0) {
-            continue;
-        }
-        for (int edge_id : adjacency[v]) {
-            if (edge_visited[static_cast<std::size_t>(edge_id)] == 0) {
-                extend_from_node(static_cast<int>(v), edge_id);
-            }
-        }
-    }
-
-    for (int edge_id = 0; edge_id < static_cast<int>(edges.size()); ++edge_id) {
-        if (edge_visited[static_cast<std::size_t>(edge_id)] != 0) {
-            continue;
-        }
-
-        const int start_vertex = edges[static_cast<std::size_t>(edge_id)].u;
-        std::vector<int> path_vertices;
-        path_vertices.reserve(16);
-        path_vertices.push_back(start_vertex);
-
-        int current_vertex = start_vertex;
-        int current_edge = edge_id;
-
-        for (;;) {
-            edge_visited[static_cast<std::size_t>(current_edge)] = 1;
-            const int next_vertex = other_vertex(current_edge, current_vertex);
-            path_vertices.push_back(next_vertex);
-
-            int next_edge = -1;
-            const auto& incident = adjacency[static_cast<std::size_t>(next_vertex)];
-            for (int candidate : incident) {
-                if (candidate != current_edge && edge_visited[static_cast<std::size_t>(candidate)] == 0) {
-                    next_edge = candidate;
-                    break;
-                }
-            }
-
-            if (next_edge < 0 || next_vertex == start_vertex) {
-                break;
-            }
-
-            current_vertex = next_vertex;
-            current_edge = next_edge;
-        }
-
-        int loop_node = vertex_to_node[static_cast<std::size_t>(start_vertex)];
-        if (loop_node < 0) {
-            loop_node = static_cast<int>(packed.nodes_yx.size());
-            vertex_to_node[static_cast<std::size_t>(start_vertex)] = loop_node;
-            is_node[static_cast<std::size_t>(start_vertex)] = 1;
-            const auto& p = vertices_xy[static_cast<std::size_t>(start_vertex)];
-            packed.nodes_yx.push_back(std::array<double, 2>{p.y, p.x});
-        }
-
-        graph_paths.push_back(GraphPath{loop_node, loop_node, path_vertices, polyline_length(path_vertices, vertices_xy)});
-    }
-
-    packed.edge_offsets.reserve(graph_paths.size() + 1);
-    packed.edge_offsets.push_back(0);
-
-    for (const auto& path : graph_paths) {
-        packed.edges_u.push_back(static_cast<long long>(path.node_u));
-        packed.edges_v.push_back(static_cast<long long>(path.node_v));
-        packed.edge_weights.push_back(path.weight);
-
-        for (int vertex_id : path.vertices) {
-            const auto& p = vertices_xy[static_cast<std::size_t>(vertex_id)];
-            packed.edge_points_yx.push_back(std::array<double, 2>{p.y, p.x});
-        }
-
-        packed.edge_offsets.push_back(static_cast<long long>(packed.edge_points_yx.size()));
-    }
-
-    return packed;
-}
-
-py::dict pack_graph_data_to_dict(const PackedGraphData& packed) {
+py::dict pack_graph_data_to_dict(const pyvoronoi_internal::PackedGraphData& packed) {
     py::array_t<double> nodes(py::array::ShapeContainer{
-        static_cast<py::ssize_t>(packed.nodes_yx.size()),
+        static_cast<py::ssize_t>(packed.nodes_xy.size()),
         static_cast<py::ssize_t>(2),
     });
     auto nodes_out = nodes.mutable_unchecked<2>();
-    for (py::ssize_t i = 0; i < static_cast<py::ssize_t>(packed.nodes_yx.size()); ++i) {
-        nodes_out(i, 0) = packed.nodes_yx[static_cast<std::size_t>(i)][0];
-        nodes_out(i, 1) = packed.nodes_yx[static_cast<std::size_t>(i)][1];
+    for (py::ssize_t i = 0; i < static_cast<py::ssize_t>(packed.nodes_xy.size()); ++i) {
+        nodes_out(i, 0) = packed.nodes_xy[static_cast<std::size_t>(i)][0];
+        nodes_out(i, 1) = packed.nodes_xy[static_cast<std::size_t>(i)][1];
     }
 
     py::array_t<long long> edges_u(static_cast<py::ssize_t>(packed.edges_u.size()));
@@ -282,7 +35,7 @@ py::dict pack_graph_data_to_dict(const PackedGraphData& packed) {
     py::array_t<long long> edge_offsets(static_cast<py::ssize_t>(packed.edge_offsets.size()));
     py::array_t<double> edge_weights(static_cast<py::ssize_t>(packed.edge_weights.size()));
     py::array_t<double> edge_points(py::array::ShapeContainer{
-        static_cast<py::ssize_t>(packed.edge_points_yx.size()),
+        static_cast<py::ssize_t>(packed.edge_points_xy.size()),
         static_cast<py::ssize_t>(2),
     });
 
@@ -312,9 +65,9 @@ py::dict pack_graph_data_to_dict(const PackedGraphData& packed) {
     }
     {
         auto out = edge_points.mutable_unchecked<2>();
-        for (py::ssize_t i = 0; i < static_cast<py::ssize_t>(packed.edge_points_yx.size()); ++i) {
-            out(i, 0) = packed.edge_points_yx[static_cast<std::size_t>(i)][0];
-            out(i, 1) = packed.edge_points_yx[static_cast<std::size_t>(i)][1];
+        for (py::ssize_t i = 0; i < static_cast<py::ssize_t>(packed.edge_points_xy.size()); ++i) {
+            out(i, 0) = packed.edge_points_xy[static_cast<std::size_t>(i)][0];
+            out(i, 1) = packed.edge_points_xy[static_cast<std::size_t>(i)][1];
         }
     }
 
@@ -503,14 +256,19 @@ py::array_t<double> compute_internal_ridges_numpy(const py::array& exterior, int
     return to_ridges_array(diagram.GetInternalRidgesNoMap(polygon, scaling_factor));
 }
 
-py::dict compute_internal_graph_numpy(const py::array& exterior, int scaling_factor) {
+py::dict compute_internal_graph_numpy(
+    const py::array& exterior,
+    int scaling_factor,
+    double resample_spacing,
+    int smooth_iterations,
+    bool enforce_within_polygon) {
     if (scaling_factor <= 0) {
         throw std::invalid_argument("scaling_factor must be greater than 0");
     }
 
     const auto polygon = parse_polygon_numpy(exterior);
     if (polygon.size() < 3) {
-        PackedGraphData empty;
+        pyvoronoi_internal::PackedGraphData empty;
         empty.edge_offsets.push_back(0);
         return pack_graph_data_to_dict(empty);
     }
@@ -520,7 +278,12 @@ py::dict compute_internal_graph_numpy(const py::array& exterior, int scaling_fac
     diagram.Construct();
 
     const auto ridges = diagram.GetInternalRidgesNoMap(polygon, scaling_factor);
-    return pack_graph_data_to_dict(build_internal_graph_data(ridges));
+    pyvoronoi_internal::GraphBuildOptions options{
+        resample_spacing,
+        smooth_iterations,
+        enforce_within_polygon,
+    };
+    return pack_graph_data_to_dict(pyvoronoi_internal::build_internal_graph_data(ridges, polygon, options));
 }
 
 PYBIND11_MODULE(_pyvoronoi, m) {
@@ -605,5 +368,12 @@ PYBIND11_MODULE(_pyvoronoi, m) {
 
     m.def("compute_internal_ridges", &compute_internal_ridges_numpy, py::arg("exterior"), py::arg("scaling_factor"));
     m.def("generate_internal_segments", &compute_internal_ridges_numpy, py::arg("exterior"), py::arg("scaling_factor"));
-    m.def("generate_internal_graph", &compute_internal_graph_numpy, py::arg("exterior"), py::arg("scaling_factor"));
+    m.def(
+        "generate_internal_graph",
+        &compute_internal_graph_numpy,
+        py::arg("exterior"),
+        py::arg("scaling_factor"),
+        py::arg("resample_spacing") = 0.0,
+        py::arg("smooth_iterations") = 2,
+        py::arg("enforce_within_polygon") = true);
 }

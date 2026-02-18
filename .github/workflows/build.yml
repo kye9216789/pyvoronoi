@@ -32,7 +32,6 @@ jobs:
             - name: Build wheels
               uses: pypa/cibuildwheel@v2.21.3
               env:
-                CIBW_BEFORE_BUILD: python -m pip install Cython
                 CIBW_BUILD_VERBOSITY: 3
                 CIBW_DEBUG_TRACEBACK: TRUE
                 CIBW_SKIP: "pp3*"
@@ -53,9 +52,6 @@ jobs:
       steps:
             # Checkout code from GitHub
             - uses: actions/checkout@v4
-
-            - name: Build the standard distribution (Import Cython)
-              run: python -m pip install Cython
 
             - name: Build the standard distribution (SDist)
               run: python setup.py sdist

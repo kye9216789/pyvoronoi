@@ -471,6 +471,55 @@ class TestDegeneratedInputSegment(TestCase):
         # s = pv.get_segment(invalid_segments[0])
         self.assertEqual(1, len(invalid_segments))
 
+
+class TestInternalGraphSmoothing(TestCase):
+    @staticmethod
+    def _point_in_polygon_or_boundary(x: float, y: float, polygon_xy: np.ndarray) -> bool:
+        eps = 1e-9
+        inside = False
+        n = len(polygon_xy)
+        for i in range(n):
+            j = (i - 1) % n
+            ax, ay = polygon_xy[j]
+            bx, by = polygon_xy[i]
+
+            cross = abs((bx - ax) * (y - ay) - (by - ay) * (x - ax))
+            if cross <= eps and min(ax, bx) - eps <= x <= max(ax, bx) + eps and min(ay, by) - eps <= y <= max(ay, by) + eps:
+                return True
+
+            cond = (ay > y) != (by > y)
+            if cond:
+                x_intersect = ax + (y - ay) * (bx - ax) / (by - ay)
+                if x_intersect >= x:
+                    inside = not inside
+        return inside
+
+    def test_graph_resampling_preserves_endpoints_and_polygon_bounds(self):
+        exterior = np.asarray(np.load("cnt.npy", allow_pickle=True), dtype=np.float64)
+        if np.allclose(exterior[0], exterior[-1]):
+            exterior = exterior[:-1]
+
+        graph = pyvoronoi.generate_internal_graph(
+            exterior,
+            scaling_factor=1000000,
+            resample_spacing=2.0,
+            smooth_iterations=2,
+            enforce_within_polygon=True,
+        )
+
+        self.assertGreater(graph.number_of_edges(), 0)
+
+        for u, v, attrs in graph.edges(data=True):
+            pts = np.asarray(attrs["pts"], dtype=np.float64)
+            self.assertGreaterEqual(len(pts), 2)
+            self.assertTrue(np.allclose(pts[0], np.asarray(graph.nodes[u]["o"], dtype=np.float64)))
+            self.assertTrue(np.allclose(pts[-1], np.asarray(graph.nodes[v]["o"], dtype=np.float64)))
+
+            for point_xy in pts:
+                x = float(point_xy[0])
+                y = float(point_xy[1])
+                self.assertTrue(self._point_in_polygon_or_boundary(x, y, exterior))
+
 class TestInputPointOnInputSegment(TestCase):
     def test_no_point_on_segment(self):
         pv = pyvoronoi.PyVoronoi(1)
