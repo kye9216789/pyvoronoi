@@ -20,21 +20,21 @@ def build_and_solve_voronoi_problem(max_x, max_y):
 
     factor = 10
     pyvoronoi.SILENT = True
-    pv = pyvoronoi.Pyvoronoi(factor)
+    pv = pyvoronoi.PyVoronoi(factor)
     count_points = 0
     for x in range(max_x):
         for y in range(max_y):
-            pv.AddPoint([x + 0.5, y + 0.5])
+            pv.add_point([x + 0.5, y + 0.5])
             count_points += 1
 
     count_segment = 0
     for x in range(max_x):
         for y in range(max_y):
-            pv.AddSegment([[x,y], [x, y + 1]])
+            pv.add_segment([[x,y], [x, y + 1]])
             count_segment += 1
 
     time_before = time.time()
-    pv.Construct()
+    pv.construct()
     time_after = time.time()
     logging.info("Run pyvoronoi. Time (sec): {0}. Number of input points: {1} - segments: {2}".format(
             time_after - time_before,
@@ -43,25 +43,10 @@ def build_and_solve_voronoi_problem(max_x, max_y):
     ))
 
     logging.info(
-        f'Count output structures. Vertices: {pv.CountVertices()}, Edges: {pv.CountEdges()}, Cells: {pv.CountCells()}'
+        f'Count output structures. Vertices: {pv.count_vertices()}, Edges: {pv.count_edges()}, Cells: {pv.count_cells()}'
     )
 
-    logging.info('Start parsing edges - Evaluating performance for curve computation')
-    logging.info(f'Number of edges: {pv.CountEdges()}')
-    time_before = time.time()
-    count_curved_edges = 0
-    for i in range(pv.CountEdges()):
-        e = pv.GetEdge(i)
-        if e.start != -1 and e.end != -1:
-            startVertex = pv.GetVertex(e.start)
-            endVertex = pv.GetVertex(e.end)
-            max_distance = pyvoronoi.Distance([startVertex.X, startVertex.Y], [endVertex.X, endVertex.Y]) / 10
-            if not e.is_linear:
-                points = pv.DiscretizeCurvedEdge(i, max_distance, 1 / factor)
-                count_curved_edges += 1
-    time_after = time.time()
-    logging.info(f'Done.')
-    logging.info(f'Done parsing {count_curved_edges} curved edges. Done in {time_after - time_before} sec')
+    logging.info('Heavy geometric post-processing has moved to native C++ pipeline.')
     del pv
 
 if __name__ == '__main__':
@@ -74,4 +59,3 @@ if __name__ == '__main__':
     pr.disable()
     # pr.dump_stats('pyvoronoi_profiler.pstat')
     pr.print_stats(sort="calls")
-

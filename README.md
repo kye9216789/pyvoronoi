@@ -27,31 +27,13 @@ Windows users will need Microsoft Visual C++ installed on their machine. You can
 
 ### Dependencies
 
-Cython dependency is optional. Cpp sources generated with Cython are available in releases.
-
-Note on using the setup.py:
-
-setup.py operates in 2 modes that are based on the presence of the dev file in the root of the project.
-
-* When dev is **present**, Cython will be used to compile the .pyx sources. This is the development mode (as you get it in the git repository).
-
-* When dev is **absent**, C/C++ compiler will be used to compile the .cpp sources (that were prepared in in the development mode). This is the distribution mode (as you get it on PyPI).
-
-This way the package can be used without or with an incompatible version of Cython.
-
-The idea comes from Matt Shannon's bandmat library.
+Build from source requires a C++ compiler toolchain and `pybind11`.
 
 ### From PyPI
-
-
-Cython not required.
 
 ``pip install pyvoronoi``
 
 ### From source
-
-
-Cython required.
 
 Clone the repository:
 
@@ -61,7 +43,7 @@ Install:
 
 ``python setup.py install``
 
-After every modification of .pyx files compile with Cython:
+After every native code change rebuild the extension:
 
 ``python setup.py build_ext --inplace``
 
@@ -376,12 +358,6 @@ A good example on how to use this code can be found in this unit test:
 
 This project uses [cibuildwheel](https://github.com/pypa/cibuildwheel) to build wheels on multiple platforms.
 
-### Stubfile generation
-
-I used CythonPEG.
-https://github.com/RaubCamaioni/CythonPEG
-
-
 ### Documentation
 
 I use Sphinx. No particular reason except I like how it works and the output is user-friendly, especially with the RTD theme.
@@ -392,8 +368,8 @@ I use Sphinx. No particular reason except I like how it works and the output is 
 To generate the documentation:
 
 ```commandline
-python.exe setup.py build_ext --inplace
-D:\arcgis-pro-envs\pyvoronoi\Scripts\sphinx-build -M html docs/source/ docs/build/ -E -a
+python setup.py build_ext --inplace
+sphinx-build -M html docs/source/ docs/build/ -E -a
 ```
 
 $ (sudo) pip install sphinx

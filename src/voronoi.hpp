@@ -10,8 +10,11 @@
 #undef __GLIBC__
 
 #include "boost/polygon/voronoi.hpp"
+#include <array>
 #include "map"
 #include <cmath>
+#include <utility>
+#include <vector>
 
 struct IntersectionPoint{
 	double X;
@@ -325,6 +328,7 @@ using namespace boost::polygon;
 class VoronoiDiagram {
 public:
 	VoronoiDiagram();
+	void Reset();
 	void AddPoint(Point p);
 	void AddSegment(Segment s);
 	void Construct();
@@ -369,6 +373,10 @@ public:
 	void MapVertexIndexes();
 	void MapEdgeIndexes();
 	void MapCellIndexes();
+
+	std::vector<std::array<double, 4>> GetInternalRidgesNoMap(
+		const std::vector<std::pair<double, double>>& polygon,
+		int scaling_factor);
 
     Point GetPoint(int index);
     Segment GetSegment(int index);

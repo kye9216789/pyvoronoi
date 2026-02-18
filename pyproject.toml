@@ -1,10 +1,28 @@
 
 [build-system]
 requires = [
-    "Cython",
+    "pybind11>=2.10",
     "setuptools",
-    "wheel",
-    "cythonpeg @ git+https://github.com/RaubCamaioni/CythonPEG.git"
+    "wheel"
 ]
 
 build-backend = "setuptools.build_meta"
+
+[tool.pixi.project]
+name = "pyvoronoi"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.pypi-dependencies]
+pyvoronoi = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+python = "3.10.*"
+pip = ">=26.0.1,<27"
+numpy = ">=2.2.6,<3"
+matplotlib = ">=3.10.8,<4"
+pybind11 = ">=3.0.1,<4"
+scikit-image = ">=0.25.2,<0.26"
+networkx = ">=3.4.2,<4"

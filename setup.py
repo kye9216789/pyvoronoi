@@ -1,44 +1,21 @@
-﻿import sys
+import sys
 import os
 from setuptools import setup
 from setuptools.extension import Extension
 from pathlib import Path
+import importlib
 
 version = '1.2.4'
 
-"""
-Note on using the setup.py:
-setup.py operates in 2 modes that are based on the presence of the 'dev' file in the root of the project.
- - When 'dev' is present, Cython will be used to compile the .pyx sources. This is the development mode
-   (as you get it in the git repository).
- - When 'dev' is absent, C/C++ compiler will be used to compile the .cpp sources (that were prepared in
-   in the development mode). This is the distribution mode (as you get it on PyPI).
+from setuptools.command.build_ext import build_ext
 
-This way the package can be used without or with an incompatible version of Cython.
-
-The idea comes from: https://github.com/MattShannon/bandmat
-"""
-dev_mode = os.path.exists('dev')
-
-if dev_mode:
-    from Cython.Distutils import build_ext
-
-    print('Development mode: Compiling Cython modules from .pyx sources.')
-    sources = ["pyvoronoi/pyvoronoi.pyx", "pyvoronoi/voronoi.cpp"]
-
-else:
-    from setuptools.command.build_ext import build_ext
-
-    print('Distribution mode: Compiling from Cython generated .cpp sources.')
-    sources = ["pyvoronoi/pyvoronoi.cpp", "pyvoronoi/voronoi.cpp"]
-
-
-ext = Extension("pyvoronoi",
-                sources=sources,
-                include_dirs = ["pyvoronoi"],
-                language="c++",
-                optional=os.environ.get('CIBUILDWHEEL', '0') != '1'
-                )
+ext = Extension(
+    "_pyvoronoi",
+    sources=["src/bindings.cpp", "src/voronoi.cpp"],
+    include_dirs=["src"],
+    language="c++",
+    optional=os.environ.get('CIBUILDWHEEL', '0') != '1',
+)
 
 
 # This command has been borrowed from
@@ -51,13 +28,13 @@ if sys.argv[-1] == 'tag':
     os.system("git push --tags")
     sys.exit()
 
-# Run generation of pyi files
-pyi_command = f'{os.path.dirname(sys.executable)}{os.path.sep}Scripts{os.path.sep}cythonpeg pyvoronoi/*.pyx'
-print(pyi_command)
-os.system(pyi_command)
-
 class build_ext_subclass( build_ext ):
     def build_extensions(self):
+        pybind11 = importlib.import_module("pybind11")
+        pybind11_include = pybind11.get_include()
+        for e in self.extensions:
+            if pybind11_include not in e.include_dirs:
+                e.include_dirs.append(pybind11_include)
         print(f'Compiler type: {self.compiler.compiler_type} - Version: {sys.version_info.major}.{sys.version_info.minor}')
         # Starting from 3.11, the file longintrepr.h has moved. It is no longer under Python@3.XX\include but Python@3.XX\include\cpython        
         if sys.version_info.major == 3 and sys.version_info.minor >= 11:
@@ -76,18 +53,18 @@ setup(
     name='pyvoronoi',
     python_requires='>=3.8',
     version=version,
-    description='Cython wrapper for the Boost Voronoi library (version 1.59.0)',
+    description='pybind11 wrapper for the Boost Voronoi library (version 1.59.0)',
     long_description=(this_directory / "README.md").read_text(),
     long_description_content_type='text/markdown',
     author='Fabien Ancelin / Andrii Sydorchuk, Voxel8',
     author_email='',
     url='https://github.com/fabanc/pyvoronoi',
     keywords=['voronoi','Boost','polygon'],
-    data_files=['pyvoronoi/pyvoronoi.pyi'],
+    packages=['pyvoronoi'],
     classifiers=[
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Cython",
+        "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: C++",
         "Environment :: Other Environment",
         "Development Status :: 5 - Production/Stable",

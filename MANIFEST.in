@@ -1,6 +1,6 @@
 include pyvoronoi/voronoi.cpp
 include pyvoronoi/voronoi.hpp
-include pyvoronoi/pyvoronoi.cpp
+include pyvoronoi/bindings.cpp
 include pyvoronoi/boost/config.hpp
 include pyvoronoi/boost/cstdint.hpp
 include pyvoronoi/boost/limits.hpp

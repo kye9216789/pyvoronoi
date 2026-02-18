@@ -1,10 +1,69 @@
 #pragma warning(disable : 4503)
 #include "voronoi.hpp"
 #include "map"
+#include <array>
+#include <cmath>
+#include <stdexcept>
 #include <unordered_set>
+#include <unordered_set>
+#include <utility>
+
+namespace {
+struct IntPoint {
+    long long x;
+    long long y;
+
+    bool operator==(const IntPoint& other) const {
+        return x == other.x && y == other.y;
+    }
+};
+
+struct IntPointHash {
+    std::size_t operator()(const IntPoint& p) const {
+        const auto hx = static_cast<std::size_t>(std::hash<long long>{}(p.x));
+        const auto hy = static_cast<std::size_t>(std::hash<long long>{}(p.y));
+        return hx ^ (hy + 0x9e3779b97f4a7c15ULL + (hx << 6) + (hx >> 2));
+    }
+};
+
+bool is_inside_polygon(double x, double y, const std::vector<std::pair<double, double>>& polygon) {
+    bool inside = false;
+    const auto n = polygon.size();
+    if (n < 3) {
+        return false;
+    }
+
+    for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
+        const auto& pi = polygon[i];
+        const auto& pj = polygon[j];
+        const bool intersects = ((pi.second > y) != (pj.second > y));
+        if (!intersects) {
+            continue;
+        }
+        const double x_at_y = (pj.first - pi.first) * (y - pi.second) / ((pj.second - pi.second) + 1e-12) + pi.first;
+        if (x < x_at_y) {
+            inside = !inside;
+        }
+    }
+
+    return inside;
+}
+}
 
 VoronoiDiagram::VoronoiDiagram() {
 
+}
+
+void VoronoiDiagram::Reset() {
+    points.clear();
+    segments.clear();
+    vd.clear();
+    map_indexes_to_vertices.clear();
+    map_vertices_to_indexes.clear();
+    map_indexes_to_edges.clear();
+    map_edges_to_indexes.clear();
+    map_indexes_to_cells.clear();
+    map_cells_to_indexes.clear();
 }
 
 void VoronoiDiagram::AddPoint(Point p) {
@@ -276,4 +335,56 @@ c_Cell VoronoiDiagram::GetCell(long long index)
 	c_cell.edges = edge_identifiers;
 
 	return c_cell;
+}
+
+std::vector<std::array<double, 4>> VoronoiDiagram::GetInternalRidgesNoMap(
+    const std::vector<std::pair<double, double>>& polygon,
+    int scaling_factor) {
+    if (scaling_factor <= 0) {
+        throw std::invalid_argument("scaling_factor must be greater than 0");
+    }
+    if (polygon.size() < 3) {
+        return std::vector<std::array<double, 4>>{};
+    }
+
+    std::unordered_set<IntPoint, IntPointHash> exterior_points;
+    exterior_points.reserve(polygon.size() * 2);
+    for (const auto& p : polygon) {
+        exterior_points.insert(IntPoint{
+            static_cast<long long>(std::llround(p.first * scaling_factor)),
+            static_cast<long long>(std::llround(p.second * scaling_factor)),
+        });
+    }
+
+    const double inv_scale = 1.0 / static_cast<double>(scaling_factor);
+    std::vector<std::array<double, 4>> kept;
+    kept.reserve(static_cast<std::size_t>(vd.num_edges() / 2));
+
+    for (voronoi_diagram<double>::const_edge_iterator it = vd.edges().begin(); it != vd.edges().end(); ++it) {
+        const voronoi_diagram<double>::edge_type* edge = &(*it);
+        if (edge->vertex0() == NULL || edge->vertex1() == NULL) {
+            continue;
+        }
+
+        const double x0 = edge->vertex0()->x();
+        const double y0 = edge->vertex0()->y();
+        const double x1 = edge->vertex1()->x();
+        const double y1 = edge->vertex1()->y();
+
+        const IntPoint p0_scaled{static_cast<long long>(std::llround(x0)), static_cast<long long>(std::llround(y0))};
+        const IntPoint p1_scaled{static_cast<long long>(std::llround(x1)), static_cast<long long>(std::llround(y1))};
+        if (exterior_points.find(p0_scaled) != exterior_points.end() || exterior_points.find(p1_scaled) != exterior_points.end()) {
+            continue;
+        }
+
+        const double mx = (x0 + x1) * 0.5 * inv_scale;
+        const double my = (y0 + y1) * 0.5 * inv_scale;
+        if (!is_inside_polygon(mx, my, polygon)) {
+            continue;
+        }
+
+        kept.push_back(std::array<double, 4>{x0 * inv_scale, y0 * inv_scale, x1 * inv_scale, y1 * inv_scale});
+    }
+
+    return kept;
 }
